@@ -172,7 +172,7 @@ export default function App() {
         console.log("Sending request to Backend...");
         
         // This URL matches your Render logs
-        const response = await fetch("https://superimagedetection.onrender.com/detect", {
+        const response = await fetch("https://imagedetection-tw7n.onrender.com/detect", {
           method: "POST",
           body: formData,
         });
