@@ -21,7 +21,7 @@ API_URL = "https://api-inference.huggingface.co/models/dima806/deepfake_vs_real_
 
 # This public model usually works without a key for testing.
 # If you get errors later, you can add a token: headers = {"Authorization": "Bearer hf_YOUR_TOKEN"}
-headers = {} 
+headers = {"Authorization": "Bearer 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"} 
 
 @app.get("/")
 def home():
