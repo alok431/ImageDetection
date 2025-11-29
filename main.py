@@ -56,14 +56,30 @@ async def detect_deepfake(file: UploadFile = File(...)):
         real_score = 0.0
         
         # The AI returns a list like: [{'label': 'real', 'score': 0.9}, {'label': 'fake', 'score': 0.1}]
+        # ...
+        # --- ROBUST PARSING LOGIC ---
+        # Handle case where result is a list inside a list: [[...]]
+        # ...
+        # --- ROBUST PARSING LOGIC ---
+        # Handle case where result is a list inside a list: [[...]]
+        if isinstance(result, list) and len(result) > 0 and isinstance(result[0], list):
+            result = result[0]
+
+        fake_score = 0.0
+        real_score = 0.0
+        
+        # Iterate through labels safely
         if isinstance(result, list):
             for item in result:
-                label = item.get('label', '').lower()
-                score = item.get('score', 0)
-                if 'fake' in label or 'ai' in label:
+                label = str(item.get('label', '')).lower()
+                score = float(item.get('score', 0.0))
+                
+                # Check for various label names used by different models
+                if label in ['fake', 'ai', 'artificial', 'deepfake']:
                     fake_score = score
-                elif 'real' in label:
+                elif label in ['real', 'authentic', 'original']:
                     real_score = score
+        # ...
         
         is_fake = fake_score > real_score
         confidence = fake_score if is_fake else real_score
