@@ -1,7 +1,16 @@
-import React, { useState, useCallback } from 'react';
-import { Upload, AlertTriangle, CheckCircle, Shield, Activity, Lock, RefreshCw, X } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { 
+  Upload, 
+  AlertTriangle, 
+  CheckCircle, 
+  Shield, 
+  Activity, 
+  Lock, 
+  RefreshCw, 
+  X 
+} from 'lucide-react';
 
-// --- Components ---
+// --- Sub-components ---
 
 const Navbar = () => (
   <nav className="w-full py-4 px-6 flex justify-between items-center border-b border-slate-800 bg-slate-900/50 backdrop-blur-md sticky top-0 z-50">
@@ -27,13 +36,18 @@ const FeatureCard = ({ icon: Icon, title, desc }) => (
   </div>
 );
 
-const AnalysisResult = ({ result, onReset }) => {
+const ResultCard = ({ result, onReset }) => {
   const isFake = result.is_fake;
   const percentage = (result.confidence * 100).toFixed(1);
-  const color = isFake ? 'red' : 'emerald';
+  const [animatedWidth, setAnimatedWidth] = useState(0);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setAnimatedWidth(percentage), 100);
+    return () => clearTimeout(timer);
+  }, [percentage]);
 
   return (
-    <div className="w-full max-w-2xl bg-slate-800 rounded-3xl p-8 border border-slate-700 shadow-2xl animate-fade-in">
+    <div className="w-full max-w-2xl bg-slate-800 rounded-3xl p-8 border border-slate-700 shadow-2xl animate-[fadeIn_0.5s_ease-out]">
       <div className="flex justify-between items-start mb-6">
         <div>
           <h2 className="text-2xl font-bold text-white mb-1">Analysis Complete</h2>
@@ -47,7 +61,9 @@ const AnalysisResult = ({ result, onReset }) => {
         </button>
       </div>
 
-      <div className={`rounded-xl p-6 mb-8 border ${isFake ? 'bg-red-500/10 border-red-500/20' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
+      <div className={`rounded-xl p-6 mb-8 border transition-colors ${
+        isFake ? 'bg-red-500/10 border-red-500/20' : 'bg-emerald-500/10 border-emerald-500/20'
+      }`}>
         <div className="flex items-center space-x-4 mb-4">
           {isFake ? (
             <AlertTriangle className="w-12 h-12 text-red-500" />
@@ -70,7 +86,7 @@ const AnalysisResult = ({ result, onReset }) => {
         <div className="w-full bg-slate-900 rounded-full h-4 mb-2 overflow-hidden">
           <div 
             className={`h-full transition-all duration-1000 ease-out ${isFake ? 'bg-red-500' : 'bg-emerald-500'}`}
-            style={{ width: `${percentage}%` }}
+            style={{ width: `${animatedWidth}%` }}
           />
         </div>
         <div className="flex justify-between text-xs font-mono text-slate-400">
@@ -79,7 +95,7 @@ const AnalysisResult = ({ result, onReset }) => {
         </div>
       </div>
 
-      {/* Technical Details (Mock) */}
+      {/* Technical Details */}
       <div className="grid grid-cols-2 gap-4 text-sm">
         <div className="bg-slate-900/50 p-4 rounded-lg">
           <span className="block text-slate-500 mb-1">Model Version</span>
@@ -87,21 +103,24 @@ const AnalysisResult = ({ result, onReset }) => {
         </div>
         <div className="bg-slate-900/50 p-4 rounded-lg">
           <span className="block text-slate-500 mb-1">Artifact Type</span>
-          <span className="text-white font-mono">{isFake ? 'Face Warping / Blending' : 'None Detected'}</span>
+          <span className="text-white font-mono">
+            {isFake ? 'Face Warping / Blending' : 'None Detected'}
+          </span>
         </div>
       </div>
     </div>
   );
 };
 
+// --- Main App Component ---
+
 export default function App() {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState(null);
-  const [useDemoMode, setUseDemoMode] = useState(true);
+  const [useDemoMode, setUseDemoMode] = useState(true); // Toggle State
 
-  // Handle file selection
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
     if (selectedFile) {
@@ -111,58 +130,57 @@ export default function App() {
     }
   };
 
-  // Mock API call for demo purposes
-  const analyzeImageMock = async () => {
-    setIsAnalyzing(true);
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 2500));
-    
-    // Randomize result for demo fun
-    const isFake = Math.random() > 0.5;
-    setResult({
-      is_fake: isFake,
-      confidence: 0.85 + (Math.random() * 0.14), // Random between 85% and 99%
-      processing_time: 1.2
-    });
-    setIsAnalyzing(false);
+  const resetApp = () => {
+    setFile(null);
+    setPreview(null);
+    setResult(null);
   };
 
-  // Real API call
-  const analyzeImageReal = async () => {
+  const analyzeImage = async () => {
     if (!file) return;
     setIsAnalyzing(true);
 
-    const formData = new FormData();
-    formData.append("file", file);
-
-    try {
-      const response = await fetch("https://superimagedetection.onrender.com/detect", {
-        method: "POST",
-        body: formData,
-      });
-      const data = await response.json();
-      setResult(data);
-    } catch (error) {
-      alert("Error connecting to backend. Ensure main.py is running on port 8000.");
-      console.error(error);
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
-
-  const handleSubmit = () => {
     if (useDemoMode) {
-      analyzeImageMock();
+      // --- Demo Logic (Simulation) ---
+      // This is for TESTING UI only. Random results.
+      await new Promise(resolve => setTimeout(resolve, 2000)); 
+      const isFake = Math.random() > 0.5;
+      setResult({
+        is_fake: isFake,
+        confidence: 0.85 + (Math.random() * 0.14),
+        processing_time: 1.2
+      });
+      setIsAnalyzing(false);
     } else {
-      analyzeImageReal();
+      // --- Real API Logic (The Real Brain) ---
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        // REPLACE WITH YOUR ACTUAL RENDER URL
+        const response = await fetch("https://superimagedetection.onrender.com/detect", {
+          method: "POST",
+          body: formData,
+        });
+        
+        if (!response.ok) throw new Error("API Error");
+        
+        const data = await response.json();
+        setResult(data);
+      } catch (error) {
+        alert("Connection failed. Ensure your Python backend is running.");
+        console.error(error);
+      } finally {
+        setIsAnalyzing(false);
+      }
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500/30">
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500/30 flex flex-col">
       <Navbar />
 
-      <main className="max-w-7xl mx-auto px-6 pt-12 pb-24">
+      <main className="max-w-7xl mx-auto px-6 pt-20 pb-24 flex-grow w-full">
         
         {/* Header */}
         <div className="text-center max-w-3xl mx-auto mb-16">
@@ -176,31 +194,40 @@ export default function App() {
             Upload any image or video frame to analyze for AI-generated manipulation artifacts using our advanced ensemble neural networks.
           </p>
           
-          {/* Demo Toggle */}
-          <div className="flex items-center justify-center space-x-3 bg-slate-900/50 w-fit mx-auto px-4 py-2 rounded-full border border-slate-800">
-            <span className={`text-sm ${useDemoMode ? 'text-white' : 'text-slate-500'}`}>Demo Mode</span>
-            <button 
-              onClick={() => setUseDemoMode(!useDemoMode)}
-              className={`w-12 h-6 rounded-full p-1 transition-colors duration-300 ${useDemoMode ? 'bg-indigo-500' : 'bg-slate-700'}`}
-            >
-              <div className={`w-4 h-4 rounded-full bg-white transform transition-transform duration-300 ${useDemoMode ? 'translate-x-6' : 'translate-x-0'}`} />
-            </button>
-            <span className={`text-sm ${!useDemoMode ? 'text-white' : 'text-slate-500'}`}>Real API</span>
+          {/* --- TOGGLE BUTTON RESTORED HERE --- */}
+          <div 
+            className="flex items-center justify-center space-x-3 bg-slate-900/50 w-fit mx-auto px-4 py-2 rounded-full border border-slate-800 cursor-pointer select-none transition-all hover:border-indigo-500/50"
+            onClick={() => setUseDemoMode(!useDemoMode)}
+          >
+            <span className={`text-sm font-medium transition-colors ${useDemoMode ? 'text-white' : 'text-slate-500'}`}>
+              Demo Mode
+            </span>
+            
+            {/* The Switch UI */}
+            <div className={`w-12 h-6 rounded-full p-1 transition-colors duration-300 relative ${useDemoMode ? 'bg-indigo-500' : 'bg-slate-700'}`}>
+              <div className={`w-4 h-4 rounded-full bg-white shadow-sm transform transition-transform duration-300 ${useDemoMode ? 'translate-x-0' : 'translate-x-6'}`} />
+            </div>
+            
+            <span className={`text-sm font-medium transition-colors ${!useDemoMode ? 'text-white' : 'text-slate-500'}`}>
+              Real API
+            </span>
           </div>
+          {/* ----------------------------------- */}
+
         </div>
 
         {/* Main Interface */}
         <div className="flex flex-col items-center justify-center min-h-[400px]">
           
           {!result ? (
-            <div className="w-full max-w-2xl">
-              {/* Upload Card */}
+            <div className="w-full max-w-2xl transition-all duration-300">
+              {/* Dropzone */}
               <div className={`relative group border-2 border-dashed rounded-3xl p-12 text-center transition-all cursor-pointer overflow-hidden
-                ${isAnalyzing ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-700 hover:border-indigo-500 hover:bg-slate-800/50 bg-slate-900'}`}
+                ${isAnalyzing ? 'border-indigo-500/50 bg-indigo-500/5 cursor-default' : 'border-slate-700 hover:border-indigo-500 hover:bg-slate-800/50 bg-slate-900'}`}
               >
                 <input 
                   type="file" 
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 disabled:cursor-default"
                   onChange={handleFileChange}
                   accept="image/*"
                   disabled={isAnalyzing}
@@ -235,7 +262,7 @@ export default function App() {
               {/* Action Button */}
               {file && !isAnalyzing && (
                 <button 
-                  onClick={handleSubmit}
+                  onClick={analyzeImage}
                   className="w-full mt-6 py-4 bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white rounded-xl font-bold text-lg shadow-lg shadow-indigo-500/25 transition-all transform hover:-translate-y-1"
                 >
                   Analyze Image
@@ -243,7 +270,7 @@ export default function App() {
               )}
             </div>
           ) : (
-            <AnalysisResult result={result} onReset={() => { setFile(null); setPreview(null); setResult(null); }} />
+            <ResultCard result={result} onReset={resetApp} />
           )}
 
         </div>
