@@ -7,7 +7,7 @@ import time
 
 app = FastAPI()
 
-# 1. CORS Setup (Allows Vercel to talk to Render)
+# 1. CORS Setup
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,85 +21,94 @@ API_URL = "https://api-inference.huggingface.co/models/dima806/deepfake_vs_real_
 
 @app.get("/")
 def home():
-    return {"status": "online", "message": "Backend is running correctly"}
+    return {"status": "online", "message": "Backend is running with Universal Parser"}
 
 @app.post("/detect")
 async def detect_deepfake(file: UploadFile = File(...)):
     try:
-        # --- CRITICAL: Get Token from Render Environment ---
-        # This reads the 'HF_TOKEN' you just saved in the Render Dashboard
+        # --- DEBUG: Verify Token Loading ---
         hf_token = os.environ.get("HF_TOKEN")
-        
         if not hf_token:
-            print("ERROR: HF_TOKEN is missing in Render settings!")
-            return {
-                "is_fake": False, 
-                "confidence": 0.0, 
-                "label": "Config Error", 
-                "message": "Server Config Error: Token Missing"
-            }
+            print("CRITICAL ERROR: HF_TOKEN is missing!")
+            return {"is_fake": False, "confidence": 0.0, "label": "Config Error", "message": "Token Missing"}
+        
+        # Log first 4 chars to prove it's loaded (safe to show in logs)
+        print(f"Token loaded: {hf_token[:4]}********") 
 
         headers = {"Authorization": f"Bearer {hf_token}"}
         
-        # Read the uploaded image
         image_data = await file.read()
+        print(f"Sending image to AI... ({len(image_data)} bytes)")
 
-        # Send to Hugging Face AI
         response = requests.post(API_URL, headers=headers, data=image_data)
         
-        # --- Handle "Model Loading" (503 Error) ---
-        # If the AI is asleep, wait 10 seconds and try again
+        # --- Handle Loading/Errors ---
         if response.status_code == 503:
-            print("Model is loading... waiting 10s...")
-            time.sleep(10)
+            print("Model loading... retrying in 5s...")
+            time.sleep(5)
             response = requests.post(API_URL, headers=headers, data=image_data)
 
-        # --- Handle "Unauthorized" (401 Error) ---
-        if response.status_code == 401:
-            print("Error 401: The Token in Render is invalid or expired.")
-            return {
-                "is_fake": False, 
-                "confidence": 0.0, 
-                "label": "Auth Error", 
-                "message": "Invalid API Token"
-            }
-
-        # Check for other errors
         if response.status_code != 200:
-            print(f"AI Error: {response.text}")
+            print(f"AI API Error: {response.status_code} - {response.text}")
             return {
                 "is_fake": False, 
                 "confidence": 0.0, 
-                "label": "AI Error", 
+                "label": "API Error", 
                 "message": f"Status {response.status_code}"
             }
 
-        # --- Parse the Success Result ---
+        # --- UNIVERSAL PARSING LOGIC ---
         result = response.json()
-        print(f"AI Raw Result: {result}")
+        print(f"AI Raw Result: {result}") # Check Render Logs for this line!
 
-        # Fix structure if it's a list inside a list [[...]]
+        # Unwrap list-in-list
         if isinstance(result, list) and len(result) > 0 and isinstance(result[0], list):
             result = result[0]
 
         fake_score = 0.0
         real_score = 0.0
         
-        # Extract scores from the AI response
+        # Try to parse standard labels
         if isinstance(result, list):
             for item in result:
-                label = str(item.get('label', '')).lower()
+                label_raw = str(item.get('label', ''))
+                label = label_raw.lower()
                 score = float(item.get('score', 0.0))
                 
-                if label in ['fake', 'ai', 'artificial', 'deepfake', 'label_1']:
-                    fake_score = score
-                elif label in ['real', 'authentic', 'original', 'label_0']:
-                    real_score = score
+                # Check 1: Explicit Fake Labels
+                if label in ['fake', 'ai', 'artificial', 'deepfake', 'label_1', '1']:
+                    fake_score = max(fake_score, score)
+                # Check 2: Explicit Real Labels
+                elif label in ['real', 'authentic', 'original', 'label_0', '0']:
+                    real_score = max(real_score, score)
+                # Check 3: Partial Matches (e.g. "Fake Image")
+                elif "fake" in label:
+                    fake_score = max(fake_score, score)
+                elif "real" in label:
+                    real_score = max(real_score, score)
 
-        # Decide if it's Fake or Real
+        # --- FALLBACK: If standard parsing failed (both 0), force a result ---
+        if fake_score == 0.0 and real_score == 0.0 and len(result) > 0:
+            print("Warning: Labels not recognized. Using Fallback.")
+            # Assume the highest score is the answer, default to 'Fake' if we can't tell
+            top_item = max(result, key=lambda x: x.get('score', 0))
+            fallback_score = top_item.get('score', 0.0)
+            fallback_label = str(top_item.get('label', 'Unknown'))
+            
+            # Return raw result
+            return {
+                "is_fake": False, # Default to safe
+                "confidence": fallback_score,
+                "label": fallback_label,
+                "message": "Fallback Mode"
+            }
+
+        # Calculate final verdict
         is_fake = fake_score > real_score
         confidence = fake_score if is_fake else real_score
         label = "AI" if is_fake else "Real"
+
+        print(f"Verdict: {label} ({confidence*100:.2f}%)")
 
         return {
             "is_fake": is_fake,
@@ -119,6 +128,5 @@ async def detect_deepfake(file: UploadFile = File(...)):
         }
 
 if __name__ == "__main__":
-    # Render sets the PORT environment variable automatically
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
