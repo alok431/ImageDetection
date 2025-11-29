@@ -38,7 +38,9 @@ const FeatureCard = ({ icon: Icon, title, desc }) => (
 
 const ResultCard = ({ result, onReset }) => {
   const isFake = result.is_fake;
-  const percentage = (result.confidence * 100).toFixed(1);
+  // Ensure we have a valid number, default to 0 if missing
+  const confidenceVal = result.confidence || 0; 
+  const percentage = (confidenceVal * 100).toFixed(1);
   const [animatedWidth, setAnimatedWidth] = useState(0);
 
   useEffect(() => {
@@ -51,7 +53,11 @@ const ResultCard = ({ result, onReset }) => {
       <div className="flex justify-between items-start mb-6">
         <div>
           <h2 className="text-2xl font-bold text-white mb-1">Analysis Complete</h2>
-          <p className="text-slate-400 text-sm">Processed in {result.processing_time}s</p>
+          {result.processing_time && (
+             <p className="text-slate-400 text-sm">Processed in {result.processing_time}s</p>
+          )}
+          {/* Show the raw label for debugging if needed */}
+          <p className="text-slate-500 text-xs mt-1">Verdict: {result.label}</p>
         </div>
         <button 
           onClick={onReset}
@@ -102,9 +108,9 @@ const ResultCard = ({ result, onReset }) => {
           <span className="text-white font-mono">Veritas-v2.1 (MesoNet)</span>
         </div>
         <div className="bg-slate-900/50 p-4 rounded-lg">
-          <span className="block text-slate-500 mb-1">Artifact Type</span>
+          <span className="block text-slate-500 mb-1">Raw Output</span>
           <span className="text-white font-mono">
-            {isFake ? 'Face Warping / Blending' : 'None Detected'}
+            {result.fake_score ? `Fake: ${(result.fake_score*100).toFixed(0)}% / Real: ${(result.real_score*100).toFixed(0)}%` : 'N/A'}
           </span>
         </div>
       </div>
@@ -119,7 +125,9 @@ export default function App() {
   const [preview, setPreview] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState(null);
-  const [useDemoMode, setUseDemoMode] = useState(true); // Toggle State
+  
+  // FIXED: Default to FALSE so you use the real API immediately
+  const [useDemoMode, setUseDemoMode] = useState(false); 
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -139,37 +147,51 @@ export default function App() {
   const analyzeImage = async () => {
     if (!file) return;
     setIsAnalyzing(true);
+    setResult(null); // Clear previous results
 
     if (useDemoMode) {
       // --- Demo Logic (Simulation) ---
-      // This is for TESTING UI only. Random results.
+      console.log("Running in Demo Mode...");
       await new Promise(resolve => setTimeout(resolve, 2000)); 
       const isFake = Math.random() > 0.5;
       setResult({
         is_fake: isFake,
         confidence: 0.85 + (Math.random() * 0.14),
-        processing_time: 1.2
+        processing_time: 1.2,
+        label: isFake ? "AI" : "Real",
+        fake_score: isFake ? 0.9 : 0.1,
+        real_score: isFake ? 0.1 : 0.9
       });
       setIsAnalyzing(false);
     } else {
-      // --- Real API Logic (The Real Brain) ---
+      // --- Real API Logic ---
       const formData = new FormData();
       formData.append("file", file);
 
       try {
-        // REPLACE WITH YOUR ACTUAL RENDER URL
+        console.log("Sending request to Backend...");
+        
+        // This URL matches your Render logs
         const response = await fetch("https://superimagedetection.onrender.com/detect", {
           method: "POST",
           body: formData,
         });
         
-        if (!response.ok) throw new Error("API Error");
+        if (!response.ok) {
+           const errorText = await response.text();
+           throw new Error(`API Error: ${response.status} - ${errorText}`);
+        }
         
         const data = await response.json();
+        
+        // --- CRITICAL DEBUGGING LOG ---
+        // Press F12 in your browser and look at the Console to see this!
+        console.log("Backend Response Data:", data); 
+        
         setResult(data);
       } catch (error) {
-        alert("Connection failed. Ensure your Python backend is running.");
-        console.error(error);
+        alert(`Analysis Failed: ${error.message}`);
+        console.error("Full Error:", error);
       } finally {
         setIsAnalyzing(false);
       }
@@ -191,10 +213,10 @@ export default function App() {
             Detect <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-400">Deepfakes</span> with Precision
           </h1>
           <p className="text-lg text-slate-400 mb-8">
-            Upload any image or video frame to analyze for AI-generated manipulation artifacts using our advanced ensemble neural networks.
+            Upload any image or video frame to analyze for AI-generated manipulation artifacts.
           </p>
           
-          {/* --- TOGGLE BUTTON RESTORED HERE --- */}
+          {/* Toggle Button */}
           <div 
             className="flex items-center justify-center space-x-3 bg-slate-900/50 w-fit mx-auto px-4 py-2 rounded-full border border-slate-800 cursor-pointer select-none transition-all hover:border-indigo-500/50"
             onClick={() => setUseDemoMode(!useDemoMode)}
@@ -203,7 +225,6 @@ export default function App() {
               Demo Mode
             </span>
             
-            {/* The Switch UI */}
             <div className={`w-12 h-6 rounded-full p-1 transition-colors duration-300 relative ${useDemoMode ? 'bg-indigo-500' : 'bg-slate-700'}`}>
               <div className={`w-4 h-4 rounded-full bg-white shadow-sm transform transition-transform duration-300 ${useDemoMode ? 'translate-x-0' : 'translate-x-6'}`} />
             </div>
@@ -212,7 +233,6 @@ export default function App() {
               Real API
             </span>
           </div>
-          {/* ----------------------------------- */}
 
         </div>
 
@@ -280,17 +300,17 @@ export default function App() {
           <FeatureCard 
             icon={Activity}
             title="Artifact Analysis"
-            desc="Detects subtle pixel-level inconsistencies and compression artifacts typical of GANs and Diffusion models."
+            desc="Detects subtle pixel-level inconsistencies."
           />
           <FeatureCard 
             icon={Lock}
             title="Privacy First"
-            desc="Images are processed in ephemeral containers and deleted immediately after analysis. No data is stored."
+            desc="Images are processed in ephemeral containers."
           />
           <FeatureCard 
             icon={RefreshCw}
             title="Real-time Processing"
-            desc="Optimized PyTorch inference engine delivers results in under 2 seconds for high-resolution images."
+            desc="Optimized PyTorch inference engine."
           />
         </div>
 
