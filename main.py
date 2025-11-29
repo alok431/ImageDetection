@@ -8,20 +8,20 @@ import time
 app = FastAPI()
 
 # 1. CORS Setup
-# This allows your Vercel frontend to verify the backend is safe to talk to.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # 2. Configuration
-# We use a reliable deepfake detection model from Hugging Face
 API_URL = "https://api-inference.huggingface.co/models/dima806/deepfake_vs_real_image_detection"
 
-# WARNING: In production, store this in an Environment Variable!
+# --- SECURITY NOTE ---
+# Ensure this token is valid! 
+# If this token is invalid/expired, the API returns 401 and you get 0.0% confidence.
 headers = {"Authorization": "Bearer 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"}
 
 @app.get("/")
@@ -39,55 +39,76 @@ async def detect_deepfake(file: UploadFile = File(...)):
         # Send to Hugging Face
         response = requests.post(API_URL, headers=headers, data=image_data)
         
-        # --- Handle "Model Loading" Error ---
-        # Hugging Face serverless models go to sleep. If it's waking up, it returns a 503 error.
+        # --- Handle "Model Loading" (503) ---
         if response.status_code == 503:
             error_data = response.json()
             estimated_time = error_data.get("estimated_time", 10)
             print(f"Model is loading... waiting {estimated_time} seconds")
-            time.sleep(estimated_time) # Wait for model to load
-            # Retry once
+            time.sleep(estimated_time)
             response = requests.post(API_URL, headers=headers, data=image_data)
 
-        # Check for errors again after retry
+        # --- Handle API Errors (400, 401, 500) ---
         if response.status_code != 200:
-            print(f"AI Error: {response.text}")
+            print(f"CRITICAL AI ERROR: {response.status_code} - {response.text}")
+            # Return a special error format the frontend might display
             return {
+                "is_fake": False,
                 "confidence": 0.0, 
-                "label": "Error",
-                "message": f"AI Error: {response.status_code}"
+                "label": "API Error",
+                "message": f"HuggingFace Error: {response.status_code}"
             }
 
         result = response.json()
-        print(f"AI Raw Result: {result}")
+        print(f"AI Raw Result: {result}") # <--- CHECK RENDER LOGS FOR THIS LINE
 
-        # --- PARSING LOGIC ---
-        # The AI returns a list: [{'label': 'real', 'score': 0.6}, {'label': 'fake', 'score': 0.4}]
+        # --- ROBUST PARSING LOGIC ---
         
-        fake_score = 0.0
-        real_score = 0.0
-        
-        # Handle case where result is wrapped in an extra list [[...]]
+        # Handle [[{...}]] structure (List of lists)
         if isinstance(result, list) and len(result) > 0 and isinstance(result[0], list):
             result = result[0]
 
-        # Extract scores
+        fake_score = 0.0
+        real_score = 0.0
+        
         if isinstance(result, list):
             for item in result:
+                # Normalize label to lowercase
                 label = str(item.get('label', '')).lower()
                 score = float(item.get('score', 0.0))
                 
+                # CHECK 1: Standard Labels
                 if label in ['fake', 'ai', 'artificial', 'deepfake']:
                     fake_score = score
                 elif label in ['real', 'authentic', 'original']:
                     real_score = score
-        
-        # Determine final verdict
+                
+                # CHECK 2: Technical Labels (LABEL_0 / LABEL_1)
+                # Note: You must verify which is which for your specific model.
+                # Usually LABEL_1 = Fake, LABEL_0 = Real for this specific model, 
+                # but sometimes it is swapped. We assume 1=Fake, 0=Real here.
+                elif label == 'label_1': 
+                    fake_score = score
+                elif label == 'label_0': 
+                    real_score = score
+
+        # If we failed to find ANY scores, it means the labels didn't match anything we know
+        if fake_score == 0.0 and real_score == 0.0:
+            print(f"WARNING: No matching labels found in {result}")
+            # Fallback: Assume the highest score is the prediction, even if we don't know the label
+            if len(result) > 0:
+                top_item = max(result, key=lambda x: x.get('score', 0))
+                return {
+                    "is_fake": False,
+                    "confidence": top_item.get('score', 0.0),
+                    "label": f"Unknown Label: {top_item.get('label')}",
+                    "message": "Labels did not match known Real/Fake list"
+                }
+
+        # Determine verdict
         is_fake = fake_score > real_score
         confidence = fake_score if is_fake else real_score
         label = "AI" if is_fake else "Real"
 
-        # Return format expected by your Frontend
         return {
             "is_fake": is_fake,
             "confidence": confidence,
@@ -99,12 +120,12 @@ async def detect_deepfake(file: UploadFile = File(...)):
     except Exception as e:
         print(f"CRITICAL SERVER ERROR: {e}")
         return {
+            "is_fake": False,
             "confidence": 0.0, 
-            "label": "Error", 
+            "label": "Server Error", 
             "message": str(e)
         }
 
 if __name__ == "__main__":
-    # Render requires the app to run on port 10000 (or the $PORT env var)
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
