@@ -22,7 +22,7 @@ API_URL = "https://api-inference.huggingface.co/models/dima806/deepfake_vs_real_
 # --- SECURITY NOTE ---
 # Ensure this token is valid! 
 # If this token is invalid/expired, the API returns 401 and you get 0.0% confidence.
-headers = {"Authorization": "Bearer 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"}
+headers = {"Authorization": "Bearer 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"}
 
 @app.get("/")
 def home():
