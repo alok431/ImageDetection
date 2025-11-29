@@ -1,89 +1,84 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
+import requests
 import io
-import random
-import time
 
-# --- Setup ---
-app = FastAPI(title="Veritas Deepfake API")
+app = FastAPI()
 
-# Enable CORS so the React frontend can talk to this backend
+# Enable CORS so your Vercel frontend can talk to this
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your Vercel URL here
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- AI Model Logic ---
-# In a real app, you would load PyTorch/TensorFlow here.
-# Example: model = torch.load("mesonet.pth")
+# --- CONFIGURATION ---
+# We are using a pre-trained model from Hugging Face
+# Model: "dima806/deepfake_vs_real_image_detection" (A popular research model)
+API_URL = "https://api-inference.huggingface.co/models/dima806/deepfake_vs_real_image_detection"
 
-def preprocess_image(image_bytes):
-    """Convert bytes to PIL Image and resize for model."""
-    try:
-        image = Image.open(io.BytesIO(image_bytes))
-        image = image.convert("RGB") # Ensure standard color mode
-        image = image.resize((256, 256)) # Standard AI input size
-        return image
-    except Exception as e:
-        raise HTTPException(status_code=400, detail="Invalid image file")
-
-def run_inference(image):
-    """
-    This is where the actual AI detection happens.
-    Currently acts as a placeholder for the real model.
-    """
-    
-    # --- TODO: Insert Real Model Code Here ---
-    # tensor = transform(image).unsqueeze(0)
-    # prediction = model(tensor)
-    # confidence = torch.sigmoid(prediction).item()
-    # return confidence
-    # -----------------------------------------
-
-    # For demonstration, we simulate detection logic
-    # In a real scenario, this would return the model's actual confidence
-    time.sleep(1) # Simulate GPU processing time
-    
-    # Mock Logic: Returns a random confidence for demo
-    # (Replace this with real model output)
-    simulated_confidence = random.uniform(0.1, 0.99)
-    return simulated_confidence
-
-# --- API Endpoints ---
+# This public model usually works without a key for testing.
+# If you get errors later, you can add a token: headers = {"Authorization": "Bearer hf_YOUR_TOKEN"}
+headers = {} 
 
 @app.get("/")
 def home():
-    return {"status": "online", "message": "Deepfake Detection API Ready"}
+    return {"status": "online", "brain": "HuggingFace Real-Time AI"}
 
 @app.post("/detect")
 async def detect_deepfake(file: UploadFile = File(...)):
-    """
-    Main endpoint to handle image upload and detection.
-    """
-    # 1. Read Image
+    # 1. Read the image from the user
     image_data = await file.read()
+
+    # 2. Send image to Hugging Face AI Cloud
+    try:
+        response = requests.post(API_URL, headers=headers, data=image_data)
+        result = response.json()
+        
+        # Check if model is "loading" (common on free tier)
+        if isinstance(result, dict) and "error" in result:
+            if "loading" in result["error"]:
+                return {
+                    "is_fake": False, 
+                    "confidence": 0.0, 
+                    "message": "Model is warming up. Please try again in 30 seconds."
+                }
+            else:
+                # Log actual error for debugging
+                print("Hugging Face Error:", result)
+                raise HTTPException(status_code=500, detail=f"AI Error: {result['error']}")
+
+    except Exception as e:
+        print(f"Error calling AI: {e}")
+        raise HTTPException(status_code=500, detail="AI Service Connection Failed")
+
+    # 3. Interpret the Result
+    # The API returns a list like: [{'label': 'Fake', 'score': 0.99}, {'label': 'Real', 'score': 0.01}]
+    # Note: This specific model uses 'fake' and 'real' labels (lowercase or uppercase varies by model)
     
-    # 2. Preprocess
-    image = preprocess_image(image_data)
+    fake_score = 0
+    real_score = 0
     
-    # 3. Run AI Model
-    confidence_score = run_inference(image)
+    # Check the list structure
+    if isinstance(result, list):
+        for item in result:
+            label = item['label'].lower()
+            if 'fake' in label or 'ai' in label:
+                fake_score = item['score']
+            elif 'real' in label:
+                real_score = item['score']
     
-    # 4. Interpret Results
-    # Usually, if score > 0.5, it's considered Fake (or Real, depending on training)
-    # Let's assume 1.0 = Fake, 0.0 = Real
-    is_fake = confidence_score > 0.5
-    
+    # Logic: If Fake score is higher than Real score, it's a deepfake
+    is_fake = fake_score > real_score
+    confidence = fake_score if is_fake else real_score
+
     return {
         "filename": file.filename,
         "is_fake": is_fake,
-        "confidence": confidence_score,
-        "processing_time": 1.2, # seconds
-        "model_version": "v2.1-beta"
+        "confidence": confidence,
+        "processing_time": 0.5
     }
 
 if __name__ == "__main__":
