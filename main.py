@@ -13,16 +13,17 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # We list multiple models. If one fails, the code automatically tries the next.
 AI_MODELS = [
       # 1. PrithivML's DeepFake Detector (Very Popular)
+    # 1. PrithivML's V2 Detector (Most robust currently)
     "https://api-inference.huggingface.co/models/prithivMLmods/Deep-Fake-Detector-v2-Model",
     
-    # 2. Naman's Detector (Backup)
-    "https://api-inference.huggingface.co/models/Naman712/Deep-fake-detection",
+    # 2. Fake Image Detector (Another popular backup)
+    "https://api-inference.huggingface.co/models/idealo/fake-image-detection",
     
-    # 3. Umm-Maybe (Might be down, but keep as fallback)
-    "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector",
+    # 3. Not-Lain Deepfake (Very active)
+    "https://api-inference.huggingface.co/models/not-lain/deepfake",
     
-    # 4. FaceFake (Another alternative)
-    "https://api-inference.huggingface.co/models/facefake/deepfake_detection_v2"
+    # 4. Organika Deepfake (Fallback)
+    "https://api-inference.huggingface.co/models/Organika/sdxl-detector"
 ]
 
 def parse_result(result):
