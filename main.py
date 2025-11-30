@@ -12,10 +12,17 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # --- BULLETPROOF CONFIGURATION (UPDATED MODELS) ---
 # We list multiple models. If one fails, the code automatically tries the next.
 AI_MODELS = [
+      # 1. PrithivML's DeepFake Detector (Very Popular)
     "https://api-inference.huggingface.co/models/prithivMLmods/Deep-Fake-Detector-v2-Model",
+    
+    # 2. Naman's Detector (Backup)
     "https://api-inference.huggingface.co/models/Naman712/Deep-fake-detection",
-    "https://api-inference.huggingface.co/models/dima806/deepfake_vs_real_image_detection",
-    "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector"
+    
+    # 3. Umm-Maybe (Might be down, but keep as fallback)
+    "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector",
+    
+    # 4. FaceFake (Another alternative)
+    "https://api-inference.huggingface.co/models/facefake/deepfake_detection_v2"
 ]
 
 def parse_result(result):
