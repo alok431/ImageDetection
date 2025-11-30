@@ -9,11 +9,12 @@ app = Flask(__name__)
 # 1. CORS Setup
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# --- BULLETPROOF CONFIGURATION ---
+# --- BULLETPROOF CONFIGURATION (UPDATED MODELS) ---
 # We list multiple models. If one fails, the code automatically tries the next.
 AI_MODELS = [
-    "https://api-inference.huggingface.co/models/prithivML/deepfake-detection",
-    "https://api-inference.huggingface.co/models/not-lain/deepfake",
+    "https://api-inference.huggingface.co/models/prithivMLmods/Deep-Fake-Detector-v2-Model",
+    "https://api-inference.huggingface.co/models/Naman712/Deep-fake-detection",
+    "https://api-inference.huggingface.co/models/dima806/deepfake_vs_real_image_detection",
     "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector"
 ]
 
@@ -30,9 +31,9 @@ def parse_result(result):
             label = str(item.get('label', '')).lower()
             score = float(item.get('score', 0.0))
             
-            if label in ['fake', 'ai', 'artificial', 'deepfake', 'label_1', '1']:
+            if label in ['fake', 'ai', 'artificial', 'deepfake', 'label_1', '1', 'deepfake']:
                 fake_score = max(fake_score, score)
-            elif label in ['real', 'authentic', 'original', 'human', 'label_0', '0']:
+            elif label in ['real', 'authentic', 'original', 'human', 'label_0', '0', 'realism']:
                 real_score = max(real_score, score)
 
     # Fallback
@@ -57,7 +58,7 @@ def parse_result(result):
 
 @app.route('/', methods=['GET'])
 def home():
-    return jsonify({"status": "online", "message": "Backend running with Multi-Model Failover"})
+    return jsonify({"status": "online", "message": "Backend running with Multi-Model Failover v2"})
 
 @app.route('/detect', methods=['POST'])
 def detect():
@@ -74,11 +75,13 @@ def detect():
         image_data = file.read()
         
         last_error = ""
+        model_tried_count = 0
         
         # --- LOOP THROUGH MODELS ---
         for model_url in AI_MODELS:
+            model_tried_count += 1
             try:
-                print(f"Trying Model: {model_url}...")
+                print(f"Trying Model {model_tried_count}: {model_url}...")
                 response = requests.post(model_url, headers=headers, data=image_data)
                 
                 if response.status_code == 503:
@@ -89,6 +92,7 @@ def detect():
                     print(f"SUCCESS with {model_url}")
                     result = response.json()
                     response_data = parse_result(result)
+                    response_data["model_used"] = model_url  # Debug info
                     return jsonify(response_data)
                 
                 print(f"Failed {model_url}: Status {response.status_code}")
@@ -104,7 +108,7 @@ def detect():
             "is_fake": False,
             "confidence": 0.0,
             "label": "All Models Failed",
-            "message": f"Could not connect to any AI. Last error: {last_error}"
+            "message": f"Could not connect to any AI. Tried {model_tried_count} models. Last error: {last_error}"
         }), 200
 
     except Exception as e:
