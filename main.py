@@ -6,118 +6,108 @@ import time
 
 app = Flask(__name__)
 
-# 1. ENABLE CORS
+# 1. CORS Setup
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# 2. CONFIGURATION
-# We use the working model we found earlier
-API_URL = "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector"
+# --- BULLETPROOF CONFIGURATION ---
+# We list multiple models. If one fails, the code automatically tries the next.
+AI_MODELS = [
+    "https://api-inference.huggingface.co/models/prithivML/deepfake-detection",
+    "https://api-inference.huggingface.co/models/not-lain/deepfake",
+    "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector"
+]
+
+def parse_result(result):
+    """Helper function to unify labels from different models"""
+    if isinstance(result, list) and len(result) > 0 and isinstance(result[0], list):
+        result = result[0]
+
+    fake_score = 0.0
+    real_score = 0.0
+    
+    if isinstance(result, list):
+        for item in result:
+            label = str(item.get('label', '')).lower()
+            score = float(item.get('score', 0.0))
+            
+            if label in ['fake', 'ai', 'artificial', 'deepfake', 'label_1', '1']:
+                fake_score = max(fake_score, score)
+            elif label in ['real', 'authentic', 'original', 'human', 'label_0', '0']:
+                real_score = max(real_score, score)
+
+    # Fallback
+    if fake_score == 0.0 and real_score == 0.0 and len(result) > 0:
+        top = result[0]
+        if 'fake' in top.get('label', '').lower() or 'artificial' in top.get('label', '').lower():
+            fake_score = top.get('score')
+        else:
+            real_score = top.get('score')
+
+    is_fake = fake_score > real_score
+    confidence = fake_score if is_fake else real_score
+    label = "AI" if is_fake else "Real"
+
+    return {
+        "is_fake": is_fake,
+        "confidence": confidence,
+        "label": label,
+        "fake_score": fake_score,
+        "real_score": real_score
+    }
 
 @app.route('/', methods=['GET'])
 def home():
-    return jsonify({
-        "status": "online", 
-        "message": "Veritas AI Backend (Flask) is Running with Real AI"
-    })
+    return jsonify({"status": "online", "message": "Backend running with Multi-Model Failover"})
 
 @app.route('/detect', methods=['POST'])
 def detect():
     try:
-        # --- 1. Get Token from Render Environment ---
         hf_token = os.environ.get("HF_TOKEN")
-        
         if not hf_token:
-            print("CRITICAL ERROR: HF_TOKEN is missing!")
-            return jsonify({
-                "confidence": 0.0, 
-                "label": "Config Error", 
-                "message": "Server Token Missing"
-            }), 500
-
+            return jsonify({"confidence": 0, "label": "Config Error", "message": "Token Missing"}), 500
+        
         headers = {"Authorization": f"Bearer {hf_token}"}
         
-        # --- 2. Check File ---
         if 'file' not in request.files:
             return jsonify({"error": "No file uploaded"}), 400
-            
         file = request.files['file']
-        if file.filename == '':
-            return jsonify({"error": "No file selected"}), 400
-
-        # Read file bytes
         image_data = file.read()
-        print(f"Sending image to AI Model: {API_URL}")
-
-        # --- 3. Send to Hugging Face ---
-        response = requests.post(API_URL, headers=headers, data=image_data)
         
-        # Handle "Model Loading" (Error 503)
-        if response.status_code == 503:
-            print("Model is loading... waiting 10 seconds...")
-            time.sleep(10)
-            response = requests.post(API_URL, headers=headers, data=image_data)
-
-        # Handle Errors
-        if response.status_code != 200:
-            print(f"AI API Error: {response.status_code} - {response.text}")
-            return jsonify({
-                "confidence": 0.0, 
-                "label": "API Error", 
-                "message": f"Status {response.status_code}"
-            }), 200 # Return 200 so frontend handles it gracefully
-
-        # --- 4. Robust Parsing Logic ---
-        result = response.json()
-        print(f"AI Raw Result: {result}")
-
-        # Fix nested lists [[...]]
-        if isinstance(result, list) and len(result) > 0 and isinstance(result[0], list):
-            result = result[0]
-
-        fake_score = 0.0
-        real_score = 0.0
+        last_error = ""
         
-        if isinstance(result, list):
-            for item in result:
-                label_raw = str(item.get('label', ''))
-                label = label_raw.lower()
-                score = float(item.get('score', 0.0))
+        # --- LOOP THROUGH MODELS ---
+        for model_url in AI_MODELS:
+            try:
+                print(f"Trying Model: {model_url}...")
+                response = requests.post(model_url, headers=headers, data=image_data)
                 
-                # Check for "Fake" labels
-                if label in ['fake', 'ai', 'artificial', 'deepfake', 'label_1', '1']:
-                    fake_score = max(fake_score, score)
-                # Check for "Real" labels
-                elif label in ['real', 'authentic', 'original', 'human', 'label_0', '0']:
-                    real_score = max(real_score, score)
+                if response.status_code == 503:
+                    time.sleep(5)
+                    response = requests.post(model_url, headers=headers, data=image_data)
 
-        # Fallback Logic
-        if fake_score == 0.0 and real_score == 0.0 and len(result) > 0:
-            top_item = max(result, key=lambda x: x.get('score', 0))
-            if top_item.get('label') == 'artificial':
-                fake_score = top_item.get('score')
-            else:
-                real_score = top_item.get('score')
+                if response.status_code == 200:
+                    print(f"SUCCESS with {model_url}")
+                    result = response.json()
+                    response_data = parse_result(result)
+                    return jsonify(response_data)
+                
+                print(f"Failed {model_url}: Status {response.status_code}")
+                last_error = f"Status {response.status_code}"
+                
+            except Exception as e:
+                print(f"Exception with {model_url}: {e}")
+                last_error = str(e)
+                continue
 
-        # Verdict
-        is_fake = fake_score > real_score
-        confidence = fake_score if is_fake else real_score
-        label = "AI" if is_fake else "Real"
-
-        # Return JSON
-        response_data = {
-            "is_fake": is_fake,
-            "confidence": confidence,
-            "label": label,
-            "fake_score": fake_score,
-            "real_score": real_score,
-            "message": "Analysis successful"
-        }
-        
-        print(f"Sending response: {response_data}")
-        return jsonify(response_data)
+        # If ALL models fail
+        return jsonify({
+            "is_fake": False,
+            "confidence": 0.0,
+            "label": "All Models Failed",
+            "message": f"Could not connect to any AI. Last error: {last_error}"
+        }), 200
 
     except Exception as e:
-        print(f"Error processing image: {e}")
         return jsonify({"error": str(e), "confidence": 0.0, "label": "Error"}), 500
 
 if __name__ == '__main__':
