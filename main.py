@@ -1,127 +1,98 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import os
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 import requests
+import os
 import time
 
-app = Flask(__name__)
+app = FastAPI()
 
-# 1. CORS Setup
-CORS(app, resources={r"/*": {"origins": "*"}})
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# --- BULLETPROOF CONFIGURATION (UPDATED MODELS) ---
-# We list multiple models. If one fails, the code automatically tries the next.
-AI_MODELS = [
-      # 1. PrithivML's DeepFake Detector (Very Popular)
-    # 1. PrithivML's V2 Detector (Most robust currently)
-    "https://api-inference.huggingface.co/models/prithivMLmods/Deep-Fake-Detector-v2-Model",
-    
-    # 2. Fake Image Detector (Another popular backup)
-    "https://api-inference.huggingface.co/models/idealo/fake-image-detection",
-    
-    # 3. Not-Lain Deepfake (Very active)
-    "https://api-inference.huggingface.co/models/not-lain/deepfake",
-    
-    # 4. Organika Deepfake (Fallback)
-    "https://api-inference.huggingface.co/models/Organika/sdxl-detector"
+# --- CONFIGURATION ---
+MODELS = [
+    "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector",
+    "https://api-inference.huggingface.co/models/prithivMLmods/Deep-Fake-Detector-Model"
 ]
 
-def parse_result(result):
-    """Helper function to unify labels from different models"""
-    if isinstance(result, list) and len(result) > 0 and isinstance(result[0], list):
-        result = result[0]
+# SECURE WAY: Read token from the Environment (Render settings)
+# This looks for a variable named "HF_TOKEN" on the server.
+hf_token = os.environ.get("HF_TOKEN")
+headers = {"Authorization": f"Bearer {hf_token}"}
 
-    fake_score = 0.0
-    real_score = 0.0
+@app.get("/")
+def home():
+    return {"status": "online", "version": "SECURE_V10"}
+
+@app.post("/detect")
+async def detect_deepfake(file: UploadFile = File(...)):
+    start_time = time.time()
+    image_data = await file.read()
     
-    if isinstance(result, list):
-        for item in result:
-            label = str(item.get('label', '')).lower()
-            score = float(item.get('score', 0.0))
+    last_error = ""
+    
+    for model_url in MODELS:
+        try:
+            print(f"Trying Model: {model_url}...")
+            response = requests.post(model_url, headers=headers, data=image_data)
             
-            if label in ['fake', 'ai', 'artificial', 'deepfake', 'label_1', '1', 'deepfake']:
-                fake_score = max(fake_score, score)
-            elif label in ['real', 'authentic', 'original', 'human', 'label_0', '0', 'realism']:
-                real_score = max(real_score, score)
+            if response.status_code == 503:
+                print("Model loading... waiting 2s")
+                time.sleep(2)
+                response = requests.post(model_url, headers=headers, data=image_data)
 
-    # Fallback
-    if fake_score == 0.0 and real_score == 0.0 and len(result) > 0:
-        top = result[0]
-        if 'fake' in top.get('label', '').lower() or 'artificial' in top.get('label', '').lower():
-            fake_score = top.get('score')
-        else:
-            real_score = top.get('score')
+            if response.status_code != 200:
+                print(f"Model failed: {response.status_code}")
+                last_error = f"Status {response.status_code}"
+                continue 
 
-    is_fake = fake_score > real_score
-    confidence = fake_score if is_fake else real_score
-    label = "AI" if is_fake else "Real"
+            result = response.json()
+            
+            # Parsing Logic
+            if isinstance(result, list) and len(result) > 0 and isinstance(result[0], list):
+                result = result[0]
+
+            fake_score = 0.0
+            real_score = 0.0
+            
+            if isinstance(result, list):
+                for item in result:
+                    label = str(item.get('label', '')).lower()
+                    score = float(item.get('score', 0.0))
+                    
+                    if label in ['fake', 'ai', 'artificial', 'deepfake']:
+                        fake_score = score
+                    elif label in ['real', 'authentic', 'original', 'human']:
+                        real_score = score
+            
+            is_fake = fake_score > real_score
+            confidence = fake_score if is_fake else real_score
+            processing_time = round(time.time() - start_time, 2)
+
+            return {
+                "is_fake": is_fake,
+                "confidence": confidence,
+                "processing_time": processing_time
+            }
+
+        except Exception as e:
+            print(f"Crash on model {model_url}: {e}")
+            last_error = str(e)
+            continue
 
     return {
-        "is_fake": is_fake,
-        "confidence": confidence,
-        "label": label,
-        "fake_score": fake_score,
-        "real_score": real_score
+        "is_fake": False, 
+        "confidence": 0, 
+        "processing_time": 0,
+        "message": f"All models failed. Last error: {last_error}"
     }
 
-@app.route('/', methods=['GET'])
-def home():
-    return jsonify({"status": "online", "message": "Backend running with Multi-Model Failover v2"})
-
-@app.route('/detect', methods=['POST'])
-def detect():
-    try:
-        hf_token = os.environ.get("HF_TOKEN")
-        if not hf_token:
-            return jsonify({"confidence": 0, "label": "Config Error", "message": "Token Missing"}), 500
-        
-        headers = {"Authorization": f"Bearer {hf_token}"}
-        
-        if 'file' not in request.files:
-            return jsonify({"error": "No file uploaded"}), 400
-        file = request.files['file']
-        image_data = file.read()
-        
-        last_error = ""
-        model_tried_count = 0
-        
-        # --- LOOP THROUGH MODELS ---
-        for model_url in AI_MODELS:
-            model_tried_count += 1
-            try:
-                print(f"Trying Model {model_tried_count}: {model_url}...")
-                response = requests.post(model_url, headers=headers, data=image_data)
-                
-                if response.status_code == 503:
-                    time.sleep(5)
-                    response = requests.post(model_url, headers=headers, data=image_data)
-
-                if response.status_code == 200:
-                    print(f"SUCCESS with {model_url}")
-                    result = response.json()
-                    response_data = parse_result(result)
-                    response_data["model_used"] = model_url  # Debug info
-                    return jsonify(response_data)
-                
-                print(f"Failed {model_url}: Status {response.status_code}")
-                last_error = f"Status {response.status_code}"
-                
-            except Exception as e:
-                print(f"Exception with {model_url}: {e}")
-                last_error = str(e)
-                continue
-
-        # If ALL models fail
-        return jsonify({
-            "is_fake": False,
-            "confidence": 0.0,
-            "label": "All Models Failed",
-            "message": f"Could not connect to any AI. Tried {model_tried_count} models. Last error: {last_error}"
-        }), 200
-
-    except Exception as e:
-        return jsonify({"error": str(e), "confidence": 0.0, "label": "Error"}), 500
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
